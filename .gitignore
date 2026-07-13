@@ -1,6 +1,7 @@
-# Local work and delivered planning documents
+# Local work and project documents
 /work/
 /outputs/
+/docs/
 
 # Downloaded ImageBuilder and build outputs
 /.cache/

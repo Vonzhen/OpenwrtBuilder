@@ -14,10 +14,7 @@
 
 所有构建参数统一保存在 `builder/build.env`。当前已完成仓库骨架、Shinra 配置保存文件、LuCI 未签名本地 APK 安装覆盖、ImageBuilder 构建流程、VMDK 转换流程和 GitHub Actions 工作流的本地实现。`dev` 分支的 push 不构建固件；合并到 `master` 后自动构建，也可在 `master` 上手动触发。真实固件构建与运行验收将在 GitHub Actions 中执行。
 
-项目范围、验收条件和实时进度以 [`docs/OpenWrt构建项目执行契约.md`](docs/OpenWrt构建项目执行契约.md) 为准。
-
-- 构建、分支和 Artifact 说明：[`docs/BUILD.md`](docs/BUILD.md)
-- 首次部署与升级验收：[`docs/UPGRADE-TEST.md`](docs/UPGRADE-TEST.md)
+详细执行契约、构建说明和升级验收文档保存在本地 `docs/`，不上传到 GitHub 仓库。
 
 固件覆盖文件位于 `files/`。其中 `files/etc/sysupgrade.conf` 要求 sysupgrade 保存 `/etc/shinra/`，用于本项目固件之间保留 Shinra 配置。
 
