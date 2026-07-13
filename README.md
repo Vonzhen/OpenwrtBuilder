@@ -9,6 +9,7 @@
 - ext4 combined EFI 镜像；
 - 固定大小的根分区；
 - 输出 IMG.GZ、raw IMG、VMDK 和 SHA-256 校验文件；
+- 固件内置 LuCI、HTTPS Web 服务和软件包管理界面；
 - sysupgrade 时保存 `/etc/shinra/`；
 - 允许通过 LuCI 上传并安装未签名的本地 APK。
 
