@@ -28,6 +28,7 @@ CONFIG_FILE="$SCRIPT_DIR/build.env"
 : "${IMAGE_FLAVOR:?missing IMAGE_FLAVOR}"
 : "${ROOTFS_PARTSIZE:?missing ROOTFS_PARTSIZE}"
 : "${ARTIFACT_BASENAME:?missing ARTIFACT_BASENAME}"
+: "${IMAGE_PACKAGES:?missing IMAGE_PACKAGES}"
 : "${PACKAGE_MANAGER_CALL_UPSTREAM_SHA256:?missing PACKAGE_MANAGER_CALL_UPSTREAM_SHA256}"
 
 printf '%s\n' "$OPENWRT_RELEASE_SERIES" | grep -Eq '^[0-9]+\.[0-9]+$' ||
@@ -146,9 +147,21 @@ IMAGEBUILDER_DIR="$WORK_DIR/openwrt-imagebuilder-$OPENWRT_VERSION-$OPENWRT_TARGE
 make -C "$IMAGEBUILDER_DIR" image \
 	PROFILE="$OPENWRT_PROFILE" \
 	FILES="$REPO_ROOT/files" \
+	PACKAGES="$IMAGE_PACKAGES" \
 	ROOTFS_PARTSIZE="$ROOTFS_PARTSIZE"
 
-matches=$(find "$IMAGEBUILDER_DIR/bin/targets/$OPENWRT_TARGET/$OPENWRT_SUBTARGET" -type f -name "$EXPECTED_IMAGE" -print)
+TARGET_OUTPUT_DIR="$IMAGEBUILDER_DIR/bin/targets/$OPENWRT_TARGET/$OPENWRT_SUBTARGET"
+
+manifests=$(find "$TARGET_OUTPUT_DIR" -maxdepth 1 -type f -name '*.manifest' -print)
+[ "$(printf '%s\n' "$manifests" | sed '/^$/d' | wc -l)" -eq 1 ] ||
+	die "expected exactly one package manifest"
+
+for required_package in $IMAGE_PACKAGES; do
+	grep -Eq "^${required_package}[[:space:]]+-[[:space:]]+" "$manifests" ||
+		die "required package missing from image manifest: $required_package"
+done
+
+matches=$(find "$TARGET_OUTPUT_DIR" -type f -name "$EXPECTED_IMAGE" -print)
 [ "$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l)" -eq 1 ] ||
 	die "expected exactly one $EXPECTED_IMAGE"
 
