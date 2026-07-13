@@ -1,0 +1,19 @@
+# Local work and delivered planning documents
+/work/
+/outputs/
+
+# Downloaded ImageBuilder and build outputs
+/.cache/
+/build/
+/dist/
+/bin/
+*.img
+*.img.gz
+*.vmdk
+*.zst
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
