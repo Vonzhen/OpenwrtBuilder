@@ -1,6 +1,6 @@
 # OpenWrt 构建项目执行契约
 
-状态：执行中；步骤 7–8 已完成，步骤 3–6 等待真实构建与运行验收
+状态：执行中；步骤 4–9 已完成，步骤 3 与步骤 10 等待虚拟机运行验收
 契约版本：1.2
 日期：2026-07-13
 
@@ -207,7 +207,7 @@ action="add --allow-untrusted"
 
 ### 步骤 4：实现官方 ImageBuilder 构建脚本
 
-状态：**执行中（本地实现与静态验证已完成，尚未真实构建）**
+状态：**已完成**
 
 工作内容：下载、校验、解压并调用 ImageBuilder，设置 `ROOTFS_PARTSIZE=500`。
 
@@ -215,7 +215,7 @@ action="add --allow-untrusted"
 
 ### 步骤 5：实现 VMDK 转换与校验文件
 
-状态：**执行中（本地实现与模拟验证已完成，等待真实构建验收）**
+状态：**已完成**
 
 工作内容：解压 raw IMG，以 `qemu-img` 转换 VMDK并生成 SHA-256。
 
@@ -223,7 +223,7 @@ action="add --allow-untrusted"
 
 ### 步骤 6：实现 GitHub Actions 工作流
 
-状态：**执行中（本地实现与静态验证已完成，等待 GitHub 首次运行）**
+状态：**已完成**
 
 工作内容：安装必要工具、运行统一构建脚本、上传 Artifact。
 
@@ -247,7 +247,7 @@ action="add --allow-untrusted"
 
 ### 步骤 9：GitHub 首次真实构建
 
-状态：**等待仓库上传后执行**
+状态：**已完成**
 
 工作内容：用户将代码上传 GitHub 后手动运行工作流。
 
@@ -313,6 +313,8 @@ action="add --allow-untrusted"
 | 2026-07-13 | 步骤 6：GitHub Actions | 执行中 | 已实现 `master` push 和手动触发入口，job 额外限制为 `refs/heads/master`，因此 `dev` 不会构建；工作流安装依赖后只调用统一的 `builder/build.sh`，产物不存在时上传步骤失败。官方 `actions/checkout` v7.0.0 与 `actions/upload-artifact` v7.0.1 均锁定完整提交 SHA。尚未在 GitHub 运行，步骤暂不标记完成 |
 | 2026-07-13 | 步骤 7：使用与升级文档 | 已完成 | 已建立 `docs/BUILD.md` 和 `docs/UPGRADE-TEST.md`；覆盖 dev/master 规则、Artifact、VMDK 首次部署、IMG.GZ sysupgrade、禁止替换 VMDK、Shinra 内容/权限/所有者核对、LuCI 未签名 APK 成功与失败对照及 SSH 回退方式 |
 | 2026-07-13 | 步骤 8：本地静态验证 | 已完成 | actionlint 1.7.12 检查工作流通过；ShellCheck 0.11.0 检查自有构建与转换脚本通过；三个 Shell 文件语法通过；模拟版本解析正确排除 RC 并选择最高补丁版；无稳定版本和输入缺失均按预期失败；模拟 IMG.GZ→IMG→VMDK 与三项 SHA-256 校验通过；LuCI 覆盖与官方原文仅一处允许差异；Action 完整 SHA、LF 换行、Git 差异和 sysupgrade 路径检查通过。本机未执行真实 ImageBuilder、真实 qemu-img、固件启动、LuCI APK 或 sysupgrade 测试，这些分别保留给步骤 9–10，未宣称完整构建成功 |
+| 2026-07-13 | 步骤 4–6：首次真实构建链 | 已完成 | GitHub Actions run `29232040828` 在 `master` 提交 `1eb30c23191c9b8e5de8ebe0a7d078220e943311` 上成功；依赖安装、权限检查、ImageBuilder、VMDK 转换和 Artifact 上传步骤全部成功 |
+| 2026-07-13 | 步骤 9：GitHub 首次真实构建 | 已完成 | Artifact `openwrt-x86-64-efi`（ID `8271941585`，ZIP 40,209,025 字节）包含 25.12.5 的 IMG.GZ、541,359,616 字节 raw IMG、28,573,696 字节 VMDK 和 SHA-256 清单；已从 Artifact ZIP 流式复算三个镜像哈希，全部与清单一致。固件启动、根分区、镜像内覆盖、LuCI APK 和 sysupgrade 仍归步骤 10 验收 |
 
 ## 13. 完成定义
 
