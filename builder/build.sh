@@ -28,6 +28,7 @@ CONFIG_FILE="$SCRIPT_DIR/build.env"
 : "${IMAGE_FLAVOR:?missing IMAGE_FLAVOR}"
 : "${ROOTFS_PARTSIZE:?missing ROOTFS_PARTSIZE}"
 : "${ARTIFACT_BASENAME:?missing ARTIFACT_BASENAME}"
+: "${CUSTOM_PACKAGES:?missing CUSTOM_PACKAGES}"
 : "${CUSTOM_APK_REPOSITORY_URL:?missing CUSTOM_APK_REPOSITORY_URL}"
 : "${CUSTOM_APK_PUBLIC_KEY_SHA256:?missing CUSTOM_APK_PUBLIC_KEY_SHA256}"
 
@@ -38,6 +39,11 @@ case "$ROOTFS_PARTSIZE" in
 	*[!0-9]*|'') die "ROOTFS_PARTSIZE must be a positive integer" ;;
 	0) die "ROOTFS_PARTSIZE must be greater than zero" ;;
 esac
+
+for package_name in $CUSTOM_PACKAGES; do
+	printf '%s\n' "$package_name" | grep -Eq '^[a-z0-9][a-z0-9+_.-]*$' ||
+		die "invalid custom package name: $package_name"
+done
 
 fetch() {
 	url=$1
@@ -125,7 +131,7 @@ fi
 
 [ "$#" -eq 0 ] || die "usage: $0 [--resolve-version]"
 
-for command_name in curl sha256sum awk sed grep sort tail tar make find diff mktemp openssl tr wc cat od; do
+for command_name in curl sha256sum awk sed grep sort tail tar make find diff comm mktemp openssl tr wc cat od; do
 	need_command "$command_name"
 done
 
@@ -146,7 +152,10 @@ SHA256SUMS="$WORK_DIR/sha256sums"
 ARCHIVE_PATH="$WORK_DIR/$IMAGEBUILDER_ARCHIVE"
 OFFICIAL_MANIFEST="$WORK_DIR/$OFFICIAL_MANIFEST_NAME"
 OFFICIAL_PACKAGE_NAMES="$WORK_DIR/official-package-names"
+PLANNED_MANIFEST="$WORK_DIR/planned.manifest"
+PLANNED_PACKAGE_NAMES="$WORK_DIR/planned-package-names"
 BUILT_PACKAGE_NAMES="$WORK_DIR/built-package-names"
+MISSING_OFFICIAL_PACKAGES="$WORK_DIR/missing-official-packages"
 PACKAGE_DIFF="$WORK_DIR/package.diff"
 CUSTOM_APK_INDEX="$WORK_DIR/custom-packages.adb"
 
@@ -174,15 +183,40 @@ actual_manifest_hash=$(sha256sum "$OFFICIAL_MANIFEST" | awk '{print $1}')
 awk '$2 == "-" { print $1 }' "$OFFICIAL_MANIFEST" | sort -u >"$OFFICIAL_PACKAGE_NAMES"
 [ "$(wc -l <"$OFFICIAL_PACKAGE_NAMES")" -gt 0 ] || die "official package manifest is empty"
 OFFICIAL_PACKAGES=$(tr '\n' ' ' <"$OFFICIAL_PACKAGE_NAMES")
+BUILD_PACKAGES="$OFFICIAL_PACKAGES $CUSTOM_PACKAGES"
 
 tar --zstd -xf "$ARCHIVE_PATH" -C "$WORK_DIR"
 IMAGEBUILDER_DIR="$WORK_DIR/openwrt-imagebuilder-$OPENWRT_VERSION-$OPENWRT_TARGET-$OPENWRT_SUBTARGET.Linux-x86_64"
 [ -d "$IMAGEBUILDER_DIR" ] || die "unexpected ImageBuilder archive layout"
 
+make -C "$IMAGEBUILDER_DIR" manifest \
+	PROFILE="$OPENWRT_PROFILE" \
+	PACKAGES="$BUILD_PACKAGES" >"$PLANNED_MANIFEST"
+
+awk '$2 == "-" { print $1 }' "$PLANNED_MANIFEST" | sort -u >"$PLANNED_PACKAGE_NAMES"
+[ "$(wc -l <"$PLANNED_PACKAGE_NAMES")" -gt 0 ] || die "planned package manifest is empty"
+
+comm -23 "$OFFICIAL_PACKAGE_NAMES" "$PLANNED_PACKAGE_NAMES" >"$MISSING_OFFICIAL_PACKAGES"
+if [ -s "$MISSING_OFFICIAL_PACKAGES" ]; then
+	cat "$MISSING_OFFICIAL_PACKAGES" >&2
+	die "planned image is missing packages from the official image manifest"
+fi
+
+for required_package in \
+	luci \
+	luci-ssl \
+	uhttpd \
+	uhttpd-mod-ubus \
+	openssh-sftp-server \
+	luci-i18n-base-zh-cn; do
+	grep -Fxq "$required_package" "$PLANNED_PACKAGE_NAMES" ||
+		die "planned image is missing required package: $required_package"
+done
+
 make -C "$IMAGEBUILDER_DIR" image \
 	PROFILE="$OPENWRT_PROFILE" \
 	FILES="$REPO_ROOT/files" \
-	PACKAGES="$OFFICIAL_PACKAGES" \
+	PACKAGES="$BUILD_PACKAGES" \
 	ROOTFS_PARTSIZE="$ROOTFS_PARTSIZE"
 
 TARGET_OUTPUT_DIR="$IMAGEBUILDER_DIR/bin/targets/$OPENWRT_TARGET/$OPENWRT_SUBTARGET"
@@ -192,9 +226,9 @@ manifests=$(find "$TARGET_OUTPUT_DIR" -maxdepth 1 -type f -name '*.manifest' -pr
 	die "expected exactly one package manifest"
 
 awk '$2 == "-" { print $1 }' "$manifests" | sort -u >"$BUILT_PACKAGE_NAMES"
-if ! diff -u "$OFFICIAL_PACKAGE_NAMES" "$BUILT_PACKAGE_NAMES" >"$PACKAGE_DIFF"; then
+if ! diff -u "$PLANNED_PACKAGE_NAMES" "$BUILT_PACKAGE_NAMES" >"$PACKAGE_DIFF"; then
 	cat "$PACKAGE_DIFF" >&2
-	die "built package set differs from the official image manifest"
+	die "built package set differs from the ImageBuilder planned manifest"
 fi
 
 matches=$(find "$TARGET_OUTPUT_DIR" -type f -name "$EXPECTED_IMAGE" -print)
