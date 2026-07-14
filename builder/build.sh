@@ -208,7 +208,10 @@ for required_package in \
 	uhttpd \
 	uhttpd-mod-ubus \
 	openssh-sftp-server \
-	luci-i18n-base-zh-cn; do
+	luci-i18n-base-zh-cn \
+	luci-i18n-firewall-zh-cn \
+	luci-i18n-package-manager-zh-cn \
+	luci-i18n-attendedsysupgrade-zh-cn; do
 	grep -Fxq "$required_package" "$PLANNED_PACKAGE_NAMES" ||
 		die "planned image is missing required package: $required_package"
 done
