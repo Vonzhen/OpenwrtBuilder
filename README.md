@@ -10,7 +10,7 @@
 - 固定大小的根分区；
 - 输出 IMG.GZ、raw IMG、VMDK 和 SHA-256 校验文件；
 - 软件包以同版本 OpenWrt 官方 x86/64 manifest 和 `generic` profile 为基线；
-- 默认包含 LuCI HTTPS 管理界面、简体中文核心翻译和 SFTP 服务组件；
+- 默认包含 LuCI HTTPS 管理界面、默认 LuCI 应用的简体中文翻译和 SFTP 服务组件；
 - 使用签名自定义 APK 仓库，不允许跳过签名验证；
 - 首次启动的默认 LAN 管理地址为 `10.10.11.1/24`；
 - sysupgrade 保留官方配置、Shinra 配置、自定义仓库和公钥。
@@ -19,7 +19,7 @@
 
 详细执行契约、构建说明和升级验收文档保存在本地 `docs/`，不上传到 GitHub 仓库。
 
-固件覆盖文件位于 `files/`。自定义仓库使用内置公钥完成标准 APK 签名验证。构建时先通过 ImageBuilder 的官方 `manifest` 命令计算完整软件包集合，再校验成品与计划清单一致。增量包为 `openssh-sftp-server` 和 `luci-i18n-base-zh-cn`；Dropbear 仍作为默认 SSH 服务。
+固件覆盖文件位于 `files/`。自定义仓库使用内置公钥完成标准 APK 签名验证。构建时先通过 ImageBuilder 的官方 `manifest` 命令计算完整软件包集合，再校验成品与计划清单一致。增量包包括 `openssh-sftp-server`，以及 LuCI 核心、防火墙、软件包管理和在线升级的简体中文翻译；Dropbear 仍作为默认 SSH 服务。
 
 升级只保留第三方包配置，不保留第三方程序本体；升级后可从签名仓库手动重新安装并继续使用原配置。
 
