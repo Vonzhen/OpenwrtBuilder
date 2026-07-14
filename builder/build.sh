@@ -28,8 +28,8 @@ CONFIG_FILE="$SCRIPT_DIR/build.env"
 : "${IMAGE_FLAVOR:?missing IMAGE_FLAVOR}"
 : "${ROOTFS_PARTSIZE:?missing ROOTFS_PARTSIZE}"
 : "${ARTIFACT_BASENAME:?missing ARTIFACT_BASENAME}"
-: "${IMAGE_PACKAGES:?missing IMAGE_PACKAGES}"
-: "${PACKAGE_MANAGER_CALL_UPSTREAM_SHA256:?missing PACKAGE_MANAGER_CALL_UPSTREAM_SHA256}"
+: "${CUSTOM_APK_REPOSITORY_URL:?missing CUSTOM_APK_REPOSITORY_URL}"
+: "${CUSTOM_APK_PUBLIC_KEY_SHA256:?missing CUSTOM_APK_PUBLIC_KEY_SHA256}"
 
 printf '%s\n' "$OPENWRT_RELEASE_SERIES" | grep -Eq '^[0-9]+\.[0-9]+$' ||
 	die "invalid release series: $OPENWRT_RELEASE_SERIES"
@@ -74,31 +74,46 @@ resolve_version() {
 	printf '%s\n' "$version"
 }
 
-verify_luci_overlay() {
-	feeds_file=$1
-	overlay="$REPO_ROOT/files/usr/libexec/package-manager-call"
-	official="$WORK_DIR/package-manager-call.official"
-	expected="$WORK_DIR/package-manager-call.expected"
+verify_customizations() {
+	public_key="$REPO_ROOT/files/etc/apk/keys/openwrt-packages-addon.pem"
+	custom_feed="$REPO_ROOT/files/etc/apk/repositories.d/customfeeds.list"
+	lan_defaults="$REPO_ROOT/files/etc/uci-defaults/99-custom-lan-ip"
+	upgrade_keep="$REPO_ROOT/files/lib/upgrade/keep.d/openwrt-builder"
 
-	[ -f "$overlay" ] || die "missing LuCI overlay: $overlay"
-	[ -x "$overlay" ] || die "LuCI overlay is not executable: $overlay"
+	[ -f "$public_key" ] || die "missing custom APK public key"
+	actual_key_hash=$(sha256sum "$public_key" | awk '{print $1}')
+	[ "$actual_key_hash" = "$CUSTOM_APK_PUBLIC_KEY_SHA256" ] ||
+		die "custom APK public key SHA-256 mismatch"
+	openssl pkey -pubin -in "$public_key" -noout >/dev/null 2>&1 ||
+		die "custom APK public key is not a valid PEM public key"
 
-	luci_commit=$(sed -n 's#^src-git luci .*\^\([0-9a-f][0-9a-f]*\)$#\1#p' "$feeds_file")
-	[ "$(printf '%s\n' "$luci_commit" | sed '/^$/d' | wc -l)" -eq 1 ] ||
-		die "unable to identify exactly one LuCI commit"
+	[ -f "$custom_feed" ] || die "missing custom APK repository configuration"
+	[ "$(grep -Fxc "$CUSTOM_APK_REPOSITORY_URL" "$custom_feed")" -eq 1 ] ||
+		die "custom APK repository configuration is missing or unexpected"
+	[ "$(sed '/^[[:space:]]*$/d' "$custom_feed" | wc -l)" -eq 1 ] ||
+		die "custom APK repository file must contain exactly one entry"
 
-	fetch "https://raw.githubusercontent.com/openwrt/luci/$luci_commit/applications/luci-app-package-manager/root/usr/libexec/package-manager-call" "$official"
+	[ -x "$lan_defaults" ] || die "LAN default configuration script is not executable"
+	[ "$(grep -Fxc "uci -q set network.lan.ipaddr='10.10.11.1'" "$lan_defaults")" -eq 1 ] ||
+		die "default LAN address is missing or unexpected"
+	[ -f "$upgrade_keep" ] || die "missing project sysupgrade keep rules"
+	[ "$(sed '/^[[:space:]]*$/d' "$upgrade_keep" | wc -l)" -eq 3 ] ||
+		die "project sysupgrade keep file must contain exactly three entries"
+	for keep_path in \
+		'/etc/shinra/' \
+		'/etc/apk/keys/openwrt-packages-addon.pem' \
+		'/etc/apk/repositories.d/customfeeds.list'; do
+		grep -Fxq "$keep_path" "$upgrade_keep" ||
+			die "missing project sysupgrade keep path: $keep_path"
+	done
+	[ ! -e "$REPO_ROOT/files/etc/sysupgrade.conf" ] ||
+		die "project must not replace the official /etc/sysupgrade.conf"
+	[ ! -e "$REPO_ROOT/files/usr/libexec/package-manager-call" ] ||
+		die "project must not override the official LuCI package manager"
 
-	official_hash=$(sha256sum "$official" | awk '{print $1}')
-	[ "$official_hash" = "$PACKAGE_MANAGER_CALL_UPSTREAM_SHA256" ] ||
-		die "official package-manager-call changed ($official_hash); Phase 3 review required"
-
-	[ "$(grep -Fxc '						action="add"' "$official")" -eq 1 ] ||
-		die "official package-manager-call install mapping has an unexpected structure"
-
-	sed 's/^\(\t*\)action="add"$/\1action="add --allow-untrusted"/' "$official" >"$expected"
-	cmp -s "$expected" "$overlay" ||
-		die "LuCI overlay contains changes beyond the reviewed --allow-untrusted addition"
+	if grep -R -n -- '--allow-untrusted' "$REPO_ROOT/files" >/dev/null 2>&1; then
+		die "unsigned APK installation override is forbidden"
+	fi
 }
 
 OPENWRT_VERSION=$(resolve_version)
@@ -110,13 +125,16 @@ fi
 
 [ "$#" -eq 0 ] || die "usage: $0 [--resolve-version]"
 
-for command_name in curl sha256sum awk sed grep sort tail tar make find cmp mktemp; do
+for command_name in curl sha256sum awk sed grep sort tail tar make find diff mktemp openssl tr wc cat od; do
 	need_command "$command_name"
 done
+
+verify_customizations
 
 TARGET_URL="$OPENWRT_DOWNLOAD_BASE/$OPENWRT_VERSION/targets/$OPENWRT_TARGET/$OPENWRT_SUBTARGET"
 IMAGEBUILDER_ARCHIVE="openwrt-imagebuilder-$OPENWRT_VERSION-$OPENWRT_TARGET-$OPENWRT_SUBTARGET.Linux-x86_64.tar.zst"
 EXPECTED_IMAGE="openwrt-$OPENWRT_VERSION-$OPENWRT_TARGET-$OPENWRT_SUBTARGET-$OPENWRT_PROFILE-$ROOTFS_FILESYSTEM-$IMAGE_FLAVOR.img.gz"
+OFFICIAL_MANIFEST_NAME="openwrt-$OPENWRT_VERSION-$OPENWRT_TARGET-$OPENWRT_SUBTARGET.manifest"
 
 CACHE_ROOT="$REPO_ROOT/.cache"
 DIST_DIR="$REPO_ROOT/dist"
@@ -126,11 +144,19 @@ trap 'rm -rf -- "$WORK_DIR"' EXIT HUP INT TERM
 
 SHA256SUMS="$WORK_DIR/sha256sums"
 ARCHIVE_PATH="$WORK_DIR/$IMAGEBUILDER_ARCHIVE"
-FEEDS_BUILDINFO="$WORK_DIR/feeds.buildinfo"
+OFFICIAL_MANIFEST="$WORK_DIR/$OFFICIAL_MANIFEST_NAME"
+OFFICIAL_PACKAGE_NAMES="$WORK_DIR/official-package-names"
+BUILT_PACKAGE_NAMES="$WORK_DIR/built-package-names"
+PACKAGE_DIFF="$WORK_DIR/package.diff"
+CUSTOM_APK_INDEX="$WORK_DIR/custom-packages.adb"
 
 fetch "$TARGET_URL/sha256sums" "$SHA256SUMS"
 fetch "$TARGET_URL/$IMAGEBUILDER_ARCHIVE" "$ARCHIVE_PATH"
-fetch "$TARGET_URL/feeds.buildinfo" "$FEEDS_BUILDINFO"
+fetch "$TARGET_URL/$OFFICIAL_MANIFEST_NAME" "$OFFICIAL_MANIFEST"
+fetch "$CUSTOM_APK_REPOSITORY_URL" "$CUSTOM_APK_INDEX"
+
+custom_index_magic=$(od -An -tx1 -N4 "$CUSTOM_APK_INDEX" | tr -d ' \n')
+[ "$custom_index_magic" = "41444264" ] || die "custom APK repository index has an unexpected format"
 
 expected_hash=$(awk -v name="$IMAGEBUILDER_ARCHIVE" '$2 == name || $2 == "*" name { print $1 }' "$SHA256SUMS")
 [ "$(printf '%s\n' "$expected_hash" | sed '/^$/d' | wc -l)" -eq 1 ] ||
@@ -138,7 +164,16 @@ expected_hash=$(awk -v name="$IMAGEBUILDER_ARCHIVE" '$2 == name || $2 == "*" nam
 actual_hash=$(sha256sum "$ARCHIVE_PATH" | awk '{print $1}')
 [ "$actual_hash" = "$expected_hash" ] || die "ImageBuilder SHA-256 verification failed"
 
-verify_luci_overlay "$FEEDS_BUILDINFO"
+expected_manifest_hash=$(awk -v name="$OFFICIAL_MANIFEST_NAME" '$2 == name || $2 == "*" name { print $1 }' "$SHA256SUMS")
+[ "$(printf '%s\n' "$expected_manifest_hash" | sed '/^$/d' | wc -l)" -eq 1 ] ||
+	die "official manifest has zero or multiple checksum entries"
+actual_manifest_hash=$(sha256sum "$OFFICIAL_MANIFEST" | awk '{print $1}')
+[ "$actual_manifest_hash" = "$expected_manifest_hash" ] ||
+	die "official manifest SHA-256 verification failed"
+
+awk '$2 == "-" { print $1 }' "$OFFICIAL_MANIFEST" | sort -u >"$OFFICIAL_PACKAGE_NAMES"
+[ "$(wc -l <"$OFFICIAL_PACKAGE_NAMES")" -gt 0 ] || die "official package manifest is empty"
+OFFICIAL_PACKAGES=$(tr '\n' ' ' <"$OFFICIAL_PACKAGE_NAMES")
 
 tar --zstd -xf "$ARCHIVE_PATH" -C "$WORK_DIR"
 IMAGEBUILDER_DIR="$WORK_DIR/openwrt-imagebuilder-$OPENWRT_VERSION-$OPENWRT_TARGET-$OPENWRT_SUBTARGET.Linux-x86_64"
@@ -147,7 +182,7 @@ IMAGEBUILDER_DIR="$WORK_DIR/openwrt-imagebuilder-$OPENWRT_VERSION-$OPENWRT_TARGE
 make -C "$IMAGEBUILDER_DIR" image \
 	PROFILE="$OPENWRT_PROFILE" \
 	FILES="$REPO_ROOT/files" \
-	PACKAGES="$IMAGE_PACKAGES" \
+	PACKAGES="$OFFICIAL_PACKAGES" \
 	ROOTFS_PARTSIZE="$ROOTFS_PARTSIZE"
 
 TARGET_OUTPUT_DIR="$IMAGEBUILDER_DIR/bin/targets/$OPENWRT_TARGET/$OPENWRT_SUBTARGET"
@@ -156,10 +191,11 @@ manifests=$(find "$TARGET_OUTPUT_DIR" -maxdepth 1 -type f -name '*.manifest' -pr
 [ "$(printf '%s\n' "$manifests" | sed '/^$/d' | wc -l)" -eq 1 ] ||
 	die "expected exactly one package manifest"
 
-for required_package in $IMAGE_PACKAGES; do
-	grep -Eq "^${required_package}[[:space:]]+-[[:space:]]+" "$manifests" ||
-		die "required package missing from image manifest: $required_package"
-done
+awk '$2 == "-" { print $1 }' "$manifests" | sort -u >"$BUILT_PACKAGE_NAMES"
+if ! diff -u "$OFFICIAL_PACKAGE_NAMES" "$BUILT_PACKAGE_NAMES" >"$PACKAGE_DIFF"; then
+	cat "$PACKAGE_DIFF" >&2
+	die "built package set differs from the official image manifest"
+fi
 
 matches=$(find "$TARGET_OUTPUT_DIR" -type f -name "$EXPECTED_IMAGE" -print)
 [ "$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l)" -eq 1 ] ||
