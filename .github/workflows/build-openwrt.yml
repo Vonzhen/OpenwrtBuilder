@@ -46,7 +46,7 @@ jobs:
         run: |
           test -x builder/build.sh
           test -x scripts/convert-vmdk.sh
-          test -x files/usr/libexec/package-manager-call
+          test -x files/etc/uci-defaults/99-custom-lan-ip
 
       - name: Build firmware and delivery artifacts
         run: ./builder/build.sh

@@ -1,0 +1,9 @@
+#!/bin/sh
+
+[ "$(uci -q get network.lan)" = "interface" ] || exit 1
+
+uci -q set network.lan.ipaddr='10.10.11.1'
+uci -q set network.lan.netmask='255.255.255.0'
+uci -q commit network
+
+exit 0

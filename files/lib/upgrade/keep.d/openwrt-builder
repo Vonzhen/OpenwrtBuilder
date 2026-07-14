@@ -1,0 +1,3 @@
+/etc/shinra/
+/etc/apk/keys/openwrt-packages-addon.pem
+/etc/apk/repositories.d/customfeeds.list
